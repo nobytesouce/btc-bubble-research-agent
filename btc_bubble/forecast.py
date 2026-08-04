@@ -180,11 +180,17 @@ def build_two_hour_samples(
     market: pd.DataFrame,
     bubbles: pd.DataFrame,
     horizon_seconds: int = 7200,
+    calibration_max_timestamp: int | None = None,
 ) -> pd.DataFrame:
     """Create non-overlapping forecasts issued before their complete target window."""
     source = market.sort_values("timestamp").reset_index(drop=True)
     events = bubbles.sort_values("timestamp").reset_index(drop=True)
     horizon_ms = int(horizon_seconds * 1000)
+    calibration_max = (
+        int(calibration_max_timestamp)
+        if calibration_max_timestamp is not None
+        else int(source["timestamp"].iloc[0]) - 1
+    )
     first_issue = int(source["timestamp"].iloc[0]) + horizon_ms
     last_issue = int(source["timestamp"].iloc[-1]) - horizon_ms
     columns = [
@@ -196,6 +202,10 @@ def build_two_hour_samples(
         "past_2h_median_bubble_usd",
         "actual_next_2h_mean_bubble_usd",
         "actual_next_2h_bubble_count",
+        "calibration_max_timestamp",
+        "latest_past_event_timestamp",
+        "earliest_future_event_timestamp",
+        "lookahead_violation",
     ]
     rows: list[dict] = []
     for issue in range(first_issue, last_issue + 1, horizon_ms):
@@ -214,14 +224,41 @@ def build_two_hour_samples(
             "past_2h_median_bubble_usd": float(past["cluster_q_usd"].median()),
             "actual_next_2h_mean_bubble_usd": float(future["cluster_q_usd"].mean()),
             "actual_next_2h_bubble_count": int(len(future)),
+            "calibration_max_timestamp": calibration_max,
+            "latest_past_event_timestamp": int(past["timestamp"].max()),
+            "earliest_future_event_timestamp": int(future["timestamp"].min()),
+            "lookahead_violation": bool(
+                calibration_max >= issue
+                or int(past["timestamp"].max()) > issue
+                or int(future["timestamp"].min()) <= issue
+                or int(future["timestamp"].max()) > issue + horizon_ms
+            ),
         })
-    return pd.DataFrame(rows, columns=columns)
+    samples = pd.DataFrame(rows, columns=columns)
+    validate_two_hour_samples(samples)
+    return samples
+
+
+def validate_two_hour_samples(samples: pd.DataFrame) -> None:
+    """Fail closed if calibration/features and targets cross the issue boundary."""
+    if samples.empty:
+        return
+    violations = (
+        samples["lookahead_violation"].astype(bool)
+        | (samples["calibration_max_timestamp"] >= samples["issue_timestamp"])
+        | (samples["latest_past_event_timestamp"] > samples["issue_timestamp"])
+        | (samples["earliest_future_event_timestamp"] <= samples["issue_timestamp"])
+        | (samples["target_end_timestamp"] <= samples["issue_timestamp"])
+    )
+    if bool(violations.any()):
+        raise ValueError(f"Lookahead audit failed for {int(violations.sum())} two-hour samples")
 
 
 def predict_two_hour_averages(samples: pd.DataFrame, shrinkage_count: float = 20.0) -> tuple[pd.DataFrame, dict]:
     """Sequentially predict the next two-hour mean without using an unfinished target."""
     data = samples.sort_values("issue_timestamp").reset_index(drop=True).copy()
     predictions: list[float] = []
+    latest_completed_target: list[float] = []
     for row in data.itertuples(index=False):
         completed = data[
             (data["target_end_timestamp"] <= row.issue_timestamp)
@@ -234,7 +271,14 @@ def predict_two_hour_averages(samples: pd.DataFrame, shrinkage_count: float = 20
         )
         weight = float(row.past_bubble_count / (row.past_bubble_count + shrinkage_count))
         predictions.append(weight * float(row.past_2h_mean_bubble_usd) + (1.0 - weight) * historical)
+        latest_completed_target.append(float(completed["target_end_timestamp"].max()) if len(completed) else np.nan)
     data["predicted_next_2h_mean_bubble_usd"] = predictions
+    data["latest_historical_target_end_used"] = latest_completed_target
+    history_violation = data["latest_historical_target_end_used"].notna() & (
+        data["latest_historical_target_end_used"] > data["issue_timestamp"]
+    )
+    if bool(history_violation.any()):
+        raise ValueError(f"Prediction history audit failed for {int(history_violation.sum())} forecasts")
     actual = data["actual_next_2h_mean_bubble_usd"].to_numpy(dtype=float)
     predicted = data["predicted_next_2h_mean_bubble_usd"].to_numpy(dtype=float)
     summary = {
@@ -247,6 +291,12 @@ def predict_two_hour_averages(samples: pd.DataFrame, shrinkage_count: float = 20
         "mean_absolute_error_usd": float(np.mean(np.abs(predicted - actual))) if len(actual) else None,
         "median_absolute_percentage_error": float(np.median(np.abs(predicted - actual) / actual)) if len(actual) else None,
         "correlation": float(np.corrcoef(predicted, actual)[0, 1]) if len(actual) > 1 else None,
+        "lookahead_violations": int(data["lookahead_violation"].astype(bool).sum()) if "lookahead_violation" in data else 0,
+        "history_boundary_violations": int(history_violation.sum()),
+        "causality_audit_passed": bool(
+            ("lookahead_violation" not in data or not data["lookahead_violation"].astype(bool).any())
+            and not history_violation.any()
+        ),
     }
     return data, summary
 

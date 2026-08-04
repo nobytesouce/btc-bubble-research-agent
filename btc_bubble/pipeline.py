@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+from datetime import date as calendar_date, timedelta
 
 from .backtest import backtest_events, performance_summary
 from .config import ResearchConfig
@@ -117,6 +118,10 @@ def run_two_hour_samples(date: str, max_rows: int, output_dir: str | Path, confi
     config = ResearchConfig.load(config_path)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
+    calibration_date = (calendar_date.fromisoformat(date) - timedelta(days=1)).isoformat()
+    calibration_download = download_binance_aggtrades(config.symbol, calibration_date, max_rows=max_rows)
+    calibration_frame = reconstruct_market_orders(calibration_download.frame)
+    calibration_featured = add_causal_features(calibration_frame, config.event.frozen_vwap_seconds)
     downloaded = download_binance_aggtrades(config.symbol, date, max_rows=max_rows)
     reconstructed = reconstruct_market_orders(downloaded.frame)
     try:
@@ -125,11 +130,28 @@ def run_two_hour_samples(date: str, max_rows: int, output_dir: str | Path, confi
     except Exception:
         source_frame = reconstructed
     featured = add_causal_features(source_frame, config.event.frozen_vwap_seconds)
-    calibration_end = max(1, int(len(featured) * 0.30))
-    model = ConditionalPercentiles(config.percentile.min_group_rows).fit(featured.iloc[:calibration_end].copy())
+    calibration_max_timestamp = int(calibration_featured["timestamp"].max())
+    current_min_timestamp = int(featured["timestamp"].min())
+    if calibration_max_timestamp >= current_min_timestamp:
+        raise ValueError("Calibration data must end before the forecast day starts")
+    model = ConditionalPercentiles(config.percentile.min_group_rows).fit(calibration_featured)
     scored = add_signal_columns(model.transform(featured.copy()), config)
     bubbles = cluster_signal_events(scored, config.event.cluster_ms)
-    samples = build_two_hour_samples(scored, bubbles)
+    samples = build_two_hour_samples(
+        scored,
+        bubbles,
+        calibration_max_timestamp=calibration_max_timestamp,
+    )
     samples_path = output / f"two-hour-samples-{date}.csv"
     samples.to_csv(samples_path, index=False)
-    return {"date": date, "market_rows": len(scored), "qualifying_bubbles": len(bubbles), "samples": len(samples), "samples_csv": str(samples_path)}
+    return {
+        "date": date,
+        "calibration_date": calibration_date,
+        "calibration_max_timestamp": calibration_max_timestamp,
+        "forecast_day_min_timestamp": current_min_timestamp,
+        "market_rows": len(scored),
+        "qualifying_bubbles": len(bubbles),
+        "samples": len(samples),
+        "lookahead_violations": int(samples["lookahead_violation"].sum()) if len(samples) else 0,
+        "samples_csv": str(samples_path),
+    }

@@ -12,6 +12,7 @@ from btc_bubble.forecast import (
     build_two_hour_samples,
     forecast_bubble_sizes,
     predict_two_hour_averages,
+    validate_two_hour_samples,
 )
 from btc_bubble.safety import assert_read_only_url
 
@@ -107,6 +108,18 @@ class FeatureTests(unittest.TestCase):
             float(original.loc[1, "predicted_next_2h_mean_bubble_usd"]),
             float(changed_predictions.loc[1, "predicted_next_2h_mean_bubble_usd"]),
         )
+
+    def test_timestamp_audit_rejects_future_calibration(self):
+        samples = pd.DataFrame({
+            "issue_timestamp": [100],
+            "target_end_timestamp": [200],
+            "calibration_max_timestamp": [101],
+            "latest_past_event_timestamp": [99],
+            "earliest_future_event_timestamp": [101],
+            "lookahead_violation": [False],
+        })
+        with self.assertRaises(ValueError):
+            validate_two_hour_samples(samples)
 
 
 class SafetyTests(unittest.TestCase):
