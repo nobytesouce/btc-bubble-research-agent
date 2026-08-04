@@ -23,7 +23,7 @@ jobs:
       - env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_REPO_ID: ${{ secrets.HF_REPO_ID }}
-        run: python -m btc_bubble demo --date "${{ matrix.date }}" --max-rows 1000000 --output-dir reports
+        run: python -m btc_bubble forecast --date "${{ matrix.date }}" --max-rows 1000000 --output-dir reports
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: weekly-${{ matrix.date }}

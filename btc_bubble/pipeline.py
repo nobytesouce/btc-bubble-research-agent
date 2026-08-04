@@ -13,6 +13,7 @@ from .data import (
     write_manifest,
 )
 from .features import ConditionalPercentiles, add_causal_features, add_signal_columns, cluster_signal_events
+from .forecast import forecast_bubble_sizes, forecast_summary, write_forecast_chart
 from .optimize import walk_forward_search
 from .report import write_report
 from .storage import upload_derived_artifact
@@ -72,3 +73,40 @@ def run_demo(date: str, max_rows: int, output_dir: str | Path, config_path: str 
     upload_derived_artifact(summary_path, f"summaries/{summary_path.name}")
     upload_derived_artifact(results_path, f"events/{results_path.name}")
     return {"summary": summary, "optimization": optimization, "report": str(report_path)}
+
+
+def run_forecast(date: str, max_rows: int, output_dir: str | Path, config_path: str | Path) -> dict:
+    """Generate a no-trading next-bubble forecast and comparison chart."""
+    config = ResearchConfig.load(config_path)
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    downloaded = download_binance_aggtrades(config.symbol, date, max_rows=max_rows)
+    reconstructed = reconstruct_market_orders(downloaded.frame)
+    try:
+        metrics = download_binance_metrics(config.symbol, date)
+        source_frame = attach_asof_market_context(reconstructed, metrics.frame)
+    except Exception:
+        source_frame = reconstructed
+    write_manifest(output / f"manifest-{date}.json", downloaded)
+    featured = add_causal_features(source_frame, config.event.frozen_vwap_seconds)
+    split = max(1, int(len(featured) * 0.70))
+    model = ConditionalPercentiles(config.percentile.min_group_rows).fit(featured.iloc[:split].copy())
+    scored = add_signal_columns(model.transform(featured.iloc[split:].copy()), config)
+    events = cluster_signal_events(scored, config.event.cluster_ms)
+    forecasts = forecast_bubble_sizes(events)
+    summary, future = forecast_summary(forecasts)
+    chart_path = write_forecast_chart(output / f"bubble-forecast-{date}.png", forecasts, future)
+    forecast_path = output / f"bubble-forecast-{date}.csv"
+    future_path = output / f"next-five-bubbles-{date}.csv"
+    summary_path = output / f"forecast-summary-{date}.json"
+    forecasts.to_csv(forecast_path, index=False)
+    future.to_csv(future_path, index=False)
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    upload_derived_artifact(summary_path, f"forecasts/{summary_path.name}")
+    upload_derived_artifact(forecast_path, f"forecasts/{forecast_path.name}")
+    return {
+        "summary": summary,
+        "chart": str(chart_path),
+        "forecast_csv": str(forecast_path),
+        "next_five_csv": str(future_path),
+    }

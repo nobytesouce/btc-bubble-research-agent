@@ -32,11 +32,11 @@ jobs:
           else
             echo "value=$(date -u -d '2 days ago' +%F)" >> "$GITHUB_OUTPUT"
           fi
-      - name: Run read-only research
+      - name: Run next-bubble forecast
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_REPO_ID: ${{ secrets.HF_REPO_ID }}
-        run: python -m btc_bubble demo --date "${{ steps.date.outputs.value }}" --max-rows 500000 --output-dir reports
+        run: python -m btc_bubble forecast --date "${{ steps.date.outputs.value }}" --max-rows 500000 --output-dir reports
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: btc-bubble-${{ steps.date.outputs.value }}

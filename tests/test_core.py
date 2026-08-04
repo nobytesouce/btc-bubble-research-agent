@@ -7,6 +7,7 @@ import pandas as pd
 from btc_bubble.config import ResearchConfig
 from btc_bubble.data import reconstruct_market_orders
 from btc_bubble.features import ConditionalPercentiles, add_causal_features, add_signal_columns
+from btc_bubble.forecast import forecast_bubble_sizes
 from btc_bubble.safety import assert_read_only_url
 
 
@@ -54,6 +55,19 @@ class FeatureTests(unittest.TestCase):
         scored = add_signal_columns(model.transform(featured.iloc[800:]), ResearchConfig())
         self.assertTrue(scored["bbs"].isna().all())
         self.assertFalse(scored["depth_exact"].any())
+
+    def test_bubble_forecast_uses_only_prior_events(self):
+        events = pd.DataFrame({
+            "timestamp": np.arange(7, dtype=np.int64) * 1000,
+            "side": "buy",
+            "hour": 1,
+            "vol_regime": "mid",
+            "cluster_q_usd": [100.0, 200.0, 300.0, 400.0, 500.0, 10_000.0, 20_000.0],
+        })
+        forecast = forecast_bubble_sizes(events, window=30, minimum_history=5)
+        self.assertTrue(np.isnan(forecast.loc[4, "predicted_bubble_usd"]))
+        self.assertEqual(float(forecast.loc[5, "predicted_bubble_usd"]), 300.0)
+        self.assertEqual(float(forecast.loc[6, "predicted_bubble_usd"]), 350.0)
 
 
 class SafetyTests(unittest.TestCase):
