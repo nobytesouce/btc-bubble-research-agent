@@ -1,0 +1,23 @@
+{
+  "exchange": "binance",
+  "product": "usd-m-perpetual",
+  "symbol": "BTCUSDT",
+  "percentile": {
+    "min_group_rows": 250,
+    "big": 0.99,
+    "very_big": 0.995,
+    "exceptional": 0.999,
+    "volume_gate": 0.90,
+    "depth_gate": 0.90
+  },
+  "event": {
+    "cluster_ms": 1000,
+    "frozen_vwap_seconds": 60,
+    "horizons_seconds": [5, 15, 60, 300]
+  },
+  "execution": {
+    "taker_fee_bps_each_side": 5.0,
+    "slippage_bps_each_side": 1.0
+  }
+}
+
