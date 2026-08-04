@@ -17,7 +17,9 @@ python -m btc_bubble demo --date 2024-01-01 --max-rows 120000
 python -m unittest discover -s tests -v
 ```
 
-The demo downloads one official Binance BTCUSDT USD-M aggregate-trade file, fits percentile distributions on the first 70% of rows, detects events in the remaining 30%, backtests them, and writes an HTML report under `reports/`.
+The demo downloads one official Binance BTCUSDT USD-M aggregate-trade file, reconstructs same-millisecond/same-side fragments, converts event size and trailing volume to USD notional, fits conditional percentile distributions on the first 70% of events, detects bubbles in the remaining 30%, backtests them, and writes an HTML report under `reports/`.
+
+Binance's free archive does not expose taker order IDs across price levels, so fragmented market-order reconstruction is an auditable proxy rather than an exact order-ID match. Exact `P_depth`/BBS values are emitted only when synchronized 10 bp order-book depth is supplied.
 
 ## Cloud operation
 
@@ -27,4 +29,3 @@ The demo downloads one official Binance BTCUSDT USD-M aggregate-trade file, fits
 - Raw exchange archives are never uploaded.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for coverage and validation rules.
-

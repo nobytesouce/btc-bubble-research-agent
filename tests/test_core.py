@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from btc_bubble.config import ResearchConfig
+from btc_bubble.data import reconstruct_market_orders
 from btc_bubble.features import ConditionalPercentiles, add_causal_features, add_signal_columns
 from btc_bubble.safety import assert_read_only_url
 
@@ -24,13 +25,26 @@ class FeatureTests(unittest.TestCase):
     def test_causal_volume_excludes_current_trade(self):
         featured = add_causal_features(self.synthetic(100))
         self.assertEqual(featured.loc[0, "volume_60s"], 0.0)
-        self.assertAlmostEqual(featured.loc[1, "volume_60s"], featured.loc[0, "qty"])
+        expected = featured.loc[0, "price"] * featured.loc[0, "qty"]
+        self.assertAlmostEqual(featured.loc[1, "volume_60s_usd"], expected)
+
+    def test_reconstructs_fragmented_notional(self):
+        raw = self.synthetic(3)
+        raw["agg_trade_id"] = [1, 2, 3]
+        raw["first_trade_id"] = [10, 11, 12]
+        raw["last_trade_id"] = [10, 11, 12]
+        raw.loc[1, ["timestamp", "side"]] = raw.loc[0, ["timestamp", "side"]]
+        reconstructed = reconstruct_market_orders(raw)
+        self.assertEqual(len(reconstructed), 2)
+        self.assertEqual(int(reconstructed.loc[0, "fragment_count"]), 2)
+        expected = float((raw.loc[:1, "price"] * raw.loc[:1, "qty"]).sum())
+        self.assertAlmostEqual(float(reconstructed.loc[0, "q_usd"]), expected)
 
     def test_percentile_model_scores_larger_trade_higher(self):
         featured = add_causal_features(self.synthetic())
         model = ConditionalPercentiles(min_group_rows=10).fit(featured.iloc[:800])
         comparison = featured.iloc[[500, 500]].copy().reset_index(drop=True)
-        comparison["log_q"] = np.log([0.1, 100.0])
+        comparison["log_q"] = np.log([1_000.0, 1_000_000.0])
         scored = add_signal_columns(model.transform(comparison), ResearchConfig())
         self.assertGreater(scored.iloc[1]["p_size"], scored.iloc[0]["p_size"])
 

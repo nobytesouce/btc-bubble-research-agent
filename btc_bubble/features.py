@@ -14,9 +14,11 @@ def add_causal_features(frame: pd.DataFrame, vwap_seconds: int = 60) -> pd.DataF
     ts = data["timestamp"].to_numpy(dtype=np.int64)
     qty = data["qty"].to_numpy(dtype=np.float64)
     price = data["price"].to_numpy(dtype=np.float64)
-    signed = qty * np.where(data["side"].to_numpy() == "buy", 1.0, -1.0)
-    q_prefix = np.concatenate(([0.0], np.cumsum(qty)))
-    pq_prefix = np.concatenate(([0.0], np.cumsum(price * qty)))
+    q_usd = data["q_usd"].to_numpy(dtype=np.float64) if "q_usd" in data else price * qty
+    signed = q_usd * np.where(data["side"].to_numpy() == "buy", 1.0, -1.0)
+    q_prefix = np.concatenate(([0.0], np.cumsum(q_usd)))
+    base_prefix = np.concatenate(([0.0], np.cumsum(qty)))
+    pq_prefix = np.concatenate(([0.0], np.cumsum(q_usd)))
     cvd_prefix = np.concatenate(([0.0], np.cumsum(signed)))
     left = 0
     volume = np.zeros(len(data), dtype=np.float64)
@@ -28,21 +30,24 @@ def add_causal_features(frame: pd.DataFrame, vwap_seconds: int = 60) -> pd.DataF
             left += 1
         volume[i] = q_prefix[i] - q_prefix[left]
         notional = pq_prefix[i] - pq_prefix[left]
-        if volume[i] > 0:
-            vwap[i] = notional / volume[i]
+        base_volume = base_prefix[i] - base_prefix[left]
+        if base_volume > 0:
+            vwap[i] = notional / base_volume
         cvd[i] = cvd_prefix[i] - cvd_prefix[left]
     log_price = np.log(price)
     returns = np.diff(log_price, prepend=log_price[0])
     volatility = pd.Series(returns).rolling(500, min_periods=50).std().shift(1).to_numpy()
+    data["q_usd"] = q_usd
+    data["volume_60s_usd"] = volume
     data["volume_60s"] = volume
     data["frozen_vwap"] = vwap
     data["cvd_60s"] = cvd
     data["volatility"] = volatility
-    data["log_q"] = np.log(np.maximum(qty, np.finfo(float).tiny))
-    data["r_volume"] = np.divide(qty, volume, out=np.full_like(qty, np.nan), where=volume > 0)
+    data["log_q"] = np.log(np.maximum(q_usd, np.finfo(float).tiny))
+    data["r_volume"] = np.divide(q_usd, volume, out=np.full_like(q_usd, np.nan), where=volume > 0)
     if "depth_opp_10bp" in data:
         depth = data["depth_opp_10bp"].to_numpy(dtype=np.float64)
-        data["r_depth"] = np.divide(qty, depth, out=np.full_like(qty, np.nan), where=depth > 0)
+        data["r_depth"] = np.divide(q_usd, depth, out=np.full_like(q_usd, np.nan), where=depth > 0)
     else:
         data["r_depth"] = np.nan
     dt = pd.to_datetime(data["timestamp"], unit="ms", utc=True)
@@ -138,5 +143,8 @@ def cluster_signal_events(frame: pd.DataFrame, cluster_ms: int, signal_column: s
     idx = signals.groupby("event_id", sort=False)["qty"].idxmax()
     events = signals.loc[idx].sort_values("timestamp").reset_index(drop=True)
     event_qty = signals.groupby("event_id", sort=False)["qty"].sum()
+    event_notional = signals.groupby("event_id", sort=False)["q_usd"].sum()
     events["cluster_qty"] = events["event_id"].map(event_qty)
+    events["cluster_q_usd"] = events["event_id"].map(event_notional)
+    events["rolling_median_bubble_usd"] = events["cluster_q_usd"].expanding().median()
     return events

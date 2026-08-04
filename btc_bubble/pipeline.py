@@ -5,7 +5,13 @@ import json
 
 from .backtest import backtest_events, performance_summary
 from .config import ResearchConfig
-from .data import attach_asof_market_context, download_binance_aggtrades, download_binance_metrics, write_manifest
+from .data import (
+    attach_asof_market_context,
+    download_binance_aggtrades,
+    download_binance_metrics,
+    reconstruct_market_orders,
+    write_manifest,
+)
 from .features import ConditionalPercentiles, add_causal_features, add_signal_columns, cluster_signal_events
 from .optimize import walk_forward_search
 from .report import write_report
@@ -17,11 +23,12 @@ def run_demo(date: str, max_rows: int, output_dir: str | Path, config_path: str 
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     downloaded = download_binance_aggtrades(config.symbol, date, max_rows=max_rows)
+    reconstructed = reconstruct_market_orders(downloaded.frame)
     try:
         metrics = download_binance_metrics(config.symbol, date)
-        source_frame = attach_asof_market_context(downloaded.frame, metrics.frame)
+        source_frame = attach_asof_market_context(reconstructed, metrics.frame)
     except Exception:
-        source_frame = downloaded.frame
+        source_frame = reconstructed
     write_manifest(output / f"manifest-{date}.json", downloaded)
     featured = add_causal_features(source_frame, config.event.frozen_vwap_seconds)
     split = max(1, int(len(featured) * 0.70))
@@ -44,9 +51,11 @@ def run_demo(date: str, max_rows: int, output_dir: str | Path, config_path: str 
     results.to_csv(results_path, index=False)
     summary = {
         "input_rows": len(downloaded.frame),
+        "reconstructed_market_orders": len(reconstructed),
         "training_rows": len(training),
         "evaluation_rows": len(evaluation),
         "detected_events": len(results),
+        "median_detected_bubble_usd": float(events["cluster_q_usd"].median()) if not events.empty else None,
         "events_with_exact_depth": int(results["depth_exact"].sum()) if not results.empty else 0,
         "continuation": continuation,
         "reversal": reversal,

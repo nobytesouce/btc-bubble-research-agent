@@ -56,6 +56,8 @@ def backtest_events(trades: pd.DataFrame, events: pd.DataFrame, config: Research
             "timestamp": int(event.timestamp),
             "side": event.side,
             "signal_price": float(event.price),
+            "bubble_usd": float(event.cluster_q_usd),
+            "rolling_median_bubble_usd": float(event.rolling_median_bubble_usd),
             "entry_price": float(entry),
             "p_size": float(event.p_size),
             "p_volume": float(event.p_volume) if np.isfinite(event.p_volume) else np.nan,

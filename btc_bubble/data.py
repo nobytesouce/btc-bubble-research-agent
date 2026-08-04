@@ -75,6 +75,30 @@ def download_binance_aggtrades(symbol: str, date: str, max_rows: int | None = No
     return DownloadResult(frame.sort_values("timestamp").reset_index(drop=True), url, digest)
 
 
+def reconstruct_market_orders(trades: pd.DataFrame) -> pd.DataFrame:
+    """Combine same-millisecond, same-side aggTrade fragments into one event.
+
+    Binance's public aggregate-trade archive does not expose taker order IDs, so
+    exact cross-price reconstruction is impossible. Same timestamp and aggressor
+    side is a conservative, reproducible proxy; ``fragment_count`` makes the
+    approximation auditable.
+    """
+    data = trades.sort_values(["timestamp", "agg_trade_id"]).reset_index(drop=True).copy()
+    data["q_usd"] = data["price"] * data["qty"]
+    group_columns = ["timestamp", "side", "exchange", "product", "symbol"]
+    grouped = data.groupby(group_columns, observed=True, sort=False)
+    events = grouped.agg(
+        qty=("qty", "sum"),
+        q_usd=("q_usd", "sum"),
+        fragment_count=("qty", "size"),
+        first_trade_id=("first_trade_id", "min"),
+        last_trade_id=("last_trade_id", "max"),
+        agg_trade_id=("agg_trade_id", "min"),
+    ).reset_index()
+    events["price"] = events["q_usd"] / events["qty"]
+    return events.sort_values("timestamp").reset_index(drop=True)
+
+
 def download_binance_metrics(symbol: str, date: str) -> DownloadResult:
     symbol = symbol.upper()
     url = (
