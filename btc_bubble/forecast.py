@@ -97,7 +97,7 @@ def write_forecast_chart(path: str | Path, forecasts: pd.DataFrame, future: pd.D
     price_axis.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=times.dt.tz))
     lines = price_axis.get_lines() + bubble_axis.get_lines()
     price_axis.legend(lines, [line.get_label() for line in lines], loc="upper left", ncol=2)
-    fig.tight_layout()
-    fig.savefig(target, dpi=160, bbox_inches="tight")
+    fig.subplots_adjust(left=0.09, right=0.91, bottom=0.12, top=0.90)
+    fig.savefig(target, dpi=160)
     plt.close(fig)
     return target
