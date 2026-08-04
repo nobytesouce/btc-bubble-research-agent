@@ -13,7 +13,7 @@ from .data import (
     write_manifest,
 )
 from .features import ConditionalPercentiles, add_causal_features, add_signal_columns, cluster_signal_events
-from .forecast import forecast_bubble_sizes, forecast_summary, write_forecast_chart
+from .forecast import build_two_hour_samples, forecast_bubble_sizes, forecast_summary, write_forecast_chart
 from .optimize import walk_forward_search
 from .report import write_report
 from .storage import upload_derived_artifact
@@ -110,3 +110,26 @@ def run_forecast(date: str, max_rows: int, output_dir: str | Path, config_path: 
         "forecast_csv": str(forecast_path),
         "next_five_csv": str(future_path),
     }
+
+
+def run_two_hour_samples(date: str, max_rows: int, output_dir: str | Path, config_path: str | Path) -> dict:
+    """Create strictly forward two-hour target windows for later aggregation."""
+    config = ResearchConfig.load(config_path)
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    downloaded = download_binance_aggtrades(config.symbol, date, max_rows=max_rows)
+    reconstructed = reconstruct_market_orders(downloaded.frame)
+    try:
+        metrics = download_binance_metrics(config.symbol, date)
+        source_frame = attach_asof_market_context(reconstructed, metrics.frame)
+    except Exception:
+        source_frame = reconstructed
+    featured = add_causal_features(source_frame, config.event.frozen_vwap_seconds)
+    calibration_end = max(1, int(len(featured) * 0.30))
+    model = ConditionalPercentiles(config.percentile.min_group_rows).fit(featured.iloc[:calibration_end].copy())
+    scored = add_signal_columns(model.transform(featured.copy()), config)
+    bubbles = cluster_signal_events(scored, config.event.cluster_ms)
+    samples = build_two_hour_samples(scored, bubbles)
+    samples_path = output / f"two-hour-samples-{date}.csv"
+    samples.to_csv(samples_path, index=False)
+    return {"date": date, "market_rows": len(scored), "qualifying_bubbles": len(bubbles), "samples": len(samples), "samples_csv": str(samples_path)}

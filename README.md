@@ -26,6 +26,8 @@ The `forecast` command is the default cloud task. It produces a three-line PNG c
 
 The manual `Two-month bubble prediction evaluation` GitHub workflow runs up to 63 daily forecast jobs in the cloud and combines them into one prediction-accuracy summary and three-line daily-median chart.
 
+The `Two-hour-ahead average bubble forecast` workflow issues a forecast at time `t` from the completed `(t-2h,t]` window and scores it only after `(t,t+2h]` closes. This fixed-horizon output predicts average bubble notional, not direction or trading returns.
+
 ## Cloud operation
 
 - `.github/workflows/daily.yml`: catch-up-safe daily research run.

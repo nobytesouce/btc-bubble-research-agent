@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 
-from .forecast import aggregate_forecast_directory
-from .pipeline import run_demo, run_forecast
+from .forecast import aggregate_forecast_directory, aggregate_two_hour_directory
+from .pipeline import run_demo, run_forecast, run_two_hour_samples
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,6 +23,14 @@ def build_parser() -> argparse.ArgumentParser:
     aggregate = sub.add_parser("aggregate", help="Combine many daily forecasts into one evaluation chart")
     aggregate.add_argument("--input-dir", required=True)
     aggregate.add_argument("--output-dir", default="combined-report")
+    two_hour = sub.add_parser("forecast-2h", help="Create strictly forward two-hour average-bubble samples")
+    two_hour.add_argument("--date", default="2024-01-01")
+    two_hour.add_argument("--max-rows", type=int, default=1_000_000)
+    two_hour.add_argument("--output-dir", default="reports")
+    two_hour.add_argument("--config", default="configs/default.json")
+    aggregate_two_hour = sub.add_parser("aggregate-2h", help="Combine and score two-hour-ahead samples")
+    aggregate_two_hour.add_argument("--input-dir", required=True)
+    aggregate_two_hour.add_argument("--output-dir", default="combined-report")
     return parser
 
 
@@ -36,6 +44,12 @@ def main() -> None:
         print(json.dumps(result, indent=2))
     elif args.command == "aggregate":
         result = aggregate_forecast_directory(args.input_dir, args.output_dir)
+        print(json.dumps(result, indent=2))
+    elif args.command == "forecast-2h":
+        result = run_two_hour_samples(args.date, args.max_rows, args.output_dir, args.config)
+        print(json.dumps(result, indent=2))
+    elif args.command == "aggregate-2h":
+        result = aggregate_two_hour_directory(args.input_dir, args.output_dir)
         print(json.dumps(result, indent=2))
 
 

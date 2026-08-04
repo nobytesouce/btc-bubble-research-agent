@@ -7,7 +7,12 @@ import pandas as pd
 from btc_bubble.config import ResearchConfig
 from btc_bubble.data import reconstruct_market_orders
 from btc_bubble.features import ConditionalPercentiles, add_causal_features, add_signal_columns
-from btc_bubble.forecast import aggregate_forecast_frames, forecast_bubble_sizes
+from btc_bubble.forecast import (
+    aggregate_forecast_frames,
+    build_two_hour_samples,
+    forecast_bubble_sizes,
+    predict_two_hour_averages,
+)
 from btc_bubble.safety import assert_read_only_url
 
 
@@ -81,6 +86,27 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(summary["evaluated_predictions"], 2)
         self.assertAlmostEqual(summary["median_absolute_percentage_error"], 0.25)
         self.assertEqual(len(daily), 2)
+
+    def test_two_hour_forecast_cannot_use_its_future_target(self):
+        hour = 3_600_000
+        market = pd.DataFrame({
+            "timestamp": np.arange(7, dtype=np.int64) * hour,
+            "price": np.linspace(40_000.0, 41_000.0, 7),
+        })
+        bubbles = pd.DataFrame({
+            "timestamp": np.arange(1, 7, dtype=np.int64) * hour,
+            "cluster_q_usd": [100.0, 200.0, 300.0, 400.0, 500.0, 600.0],
+        })
+        samples = build_two_hour_samples(market, bubbles)
+        original, _ = predict_two_hour_averages(samples)
+        changed = samples.copy()
+        changed.loc[1, "actual_next_2h_mean_bubble_usd"] = 1_000_000_000.0
+        changed_predictions, _ = predict_two_hour_averages(changed)
+        self.assertEqual(len(samples), 2)
+        self.assertAlmostEqual(
+            float(original.loc[1, "predicted_next_2h_mean_bubble_usd"]),
+            float(changed_predictions.loc[1, "predicted_next_2h_mean_bubble_usd"]),
+        )
 
 
 class SafetyTests(unittest.TestCase):
