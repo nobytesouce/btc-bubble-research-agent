@@ -7,7 +7,7 @@ import pandas as pd
 from btc_bubble.config import ResearchConfig
 from btc_bubble.data import reconstruct_market_orders
 from btc_bubble.features import ConditionalPercentiles, add_causal_features, add_signal_columns
-from btc_bubble.forecast import forecast_bubble_sizes
+from btc_bubble.forecast import aggregate_forecast_frames, forecast_bubble_sizes
 from btc_bubble.safety import assert_read_only_url
 
 
@@ -68,6 +68,19 @@ class FeatureTests(unittest.TestCase):
         self.assertTrue(np.isnan(forecast.loc[4, "predicted_bubble_usd"]))
         self.assertEqual(float(forecast.loc[5, "predicted_bubble_usd"]), 300.0)
         self.assertEqual(float(forecast.loc[6, "predicted_bubble_usd"]), 350.0)
+
+    def test_aggregate_forecasts_reports_accuracy(self):
+        frame = pd.DataFrame({
+            "timestamp": [1_704_067_200_000, 1_704_153_600_000],
+            "price": [42_000.0, 43_000.0],
+            "predicted_bubble_usd": [1_000_000.0, 2_000_000.0],
+            "actual_bubble_usd": [2_000_000.0, 2_000_000.0],
+        })
+        _, daily, summary = aggregate_forecast_frames([frame])
+        self.assertEqual(summary["days"], 2)
+        self.assertEqual(summary["evaluated_predictions"], 2)
+        self.assertAlmostEqual(summary["median_absolute_percentage_error"], 0.25)
+        self.assertEqual(len(daily), 2)
 
 
 class SafetyTests(unittest.TestCase):

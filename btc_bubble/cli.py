@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
+from .forecast import aggregate_forecast_directory
 from .pipeline import run_demo, run_forecast
 
 
@@ -19,6 +20,9 @@ def build_parser() -> argparse.ArgumentParser:
     forecast.add_argument("--max-rows", type=int, default=500_000)
     forecast.add_argument("--output-dir", default="reports")
     forecast.add_argument("--config", default="configs/default.json")
+    aggregate = sub.add_parser("aggregate", help="Combine many daily forecasts into one evaluation chart")
+    aggregate.add_argument("--input-dir", required=True)
+    aggregate.add_argument("--output-dir", default="combined-report")
     return parser
 
 
@@ -29,6 +33,9 @@ def main() -> None:
         print(json.dumps(result, indent=2))
     elif args.command == "forecast":
         result = run_forecast(args.date, args.max_rows, args.output_dir, args.config)
+        print(json.dumps(result, indent=2))
+    elif args.command == "aggregate":
+        result = aggregate_forecast_directory(args.input_dir, args.output_dir)
         print(json.dumps(result, indent=2))
 
 

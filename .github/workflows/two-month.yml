@@ -1,0 +1,80 @@
+name: Two-month bubble prediction evaluation
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "First UTC date (YYYY-MM-DD)"
+        required: true
+        default: "2024-01-01"
+      end_date:
+        description: "Last UTC date (YYYY-MM-DD)"
+        required: true
+        default: "2024-02-29"
+permissions:
+  contents: read
+jobs:
+  dates:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.make.outputs.matrix }}
+    steps:
+      - id: make
+        shell: bash
+        env:
+          START_DATE: ${{ inputs.start_date }}
+          END_DATE: ${{ inputs.end_date }}
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import datetime as dt
+          import json
+          import os
+          start = dt.date.fromisoformat(os.environ["START_DATE"])
+          end = dt.date.fromisoformat(os.environ["END_DATE"])
+          if end < start or (end - start).days > 62:
+              raise SystemExit("Date range must contain 1-63 days")
+          dates = [(start + dt.timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
+          print("matrix=" + json.dumps(dates, separators=(",", ":")))
+          PY
+  forecast:
+    needs: dates
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        date: ${{ fromJSON(needs.dates.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e .
+      - run: python -m btc_bubble forecast --date "${{ matrix.date }}" --max-rows 500000 --output-dir reports
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: daily-${{ matrix.date }}
+          path: reports/
+          retention-days: 14
+  aggregate:
+    if: ${{ always() && needs.forecast.result == 'success' }}
+    needs: forecast
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: daily-*
+          path: daily-results
+      - run: python -m btc_bubble aggregate --input-dir daily-results --output-dir combined-report
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: two-month-combined-report
+          path: combined-report/
+          retention-days: 14

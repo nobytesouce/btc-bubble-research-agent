@@ -24,6 +24,8 @@ Binance's free archive does not expose taker order IDs across price levels, so f
 
 The `forecast` command is the default cloud task. It produces a three-line PNG chart containing BTC price, the prediction made before each qualifying bubble, and the actual qualifying bubble notional. It also appends five dashed size/interval projections. Predictions use only earlier qualifying events and never place trades.
 
+The manual `Two-month bubble prediction evaluation` GitHub workflow runs up to 63 daily forecast jobs in the cloud and combines them into one prediction-accuracy summary and three-line daily-median chart.
+
 ## Cloud operation
 
 - `.github/workflows/daily.yml`: catch-up-safe daily research run.
