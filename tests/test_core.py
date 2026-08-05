@@ -10,6 +10,7 @@ from btc_bubble.features import ConditionalPercentiles, add_causal_features, add
 from btc_bubble.forecast import (
     aggregate_forecast_frames,
     build_two_hour_samples,
+    build_24_hour_forecasts,
     forecast_bubble_sizes,
     predict_two_hour_averages,
     validate_two_hour_samples,
@@ -120,6 +121,23 @@ class FeatureTests(unittest.TestCase):
         })
         with self.assertRaises(ValueError):
             validate_two_hour_samples(samples)
+
+    def test_24_hour_forecast_uses_only_previous_dates(self):
+        day = 86_400_000
+        events = pd.DataFrame({
+            "timestamp": [1_000, 2_000, day + 1_000, day + 2_000, 2 * day + 1_000, 2 * day + 2_000],
+            "price": [40_000.0, 40_100.0, 41_000.0, 41_100.0, 42_000.0, 42_100.0],
+            "actual_bubble_usd": [100.0, 300.0, 200.0, 400.0, 10_000.0, 20_000.0],
+        })
+        original, summary = build_24_hour_forecasts(events)
+        changed = events.copy()
+        changed.loc[4:, "actual_bubble_usd"] = [1_000_000.0, 2_000_000.0]
+        changed_forecasts, _ = build_24_hour_forecasts(changed)
+        self.assertTrue(summary["causality_audit_passed"])
+        self.assertAlmostEqual(
+            float(original.loc[1, "predicted_next_24h_mean_bubble_usd"]),
+            float(changed_forecasts.loc[1, "predicted_next_24h_mean_bubble_usd"]),
+        )
 
 
 class SafetyTests(unittest.TestCase):

@@ -28,6 +28,8 @@ The manual `Two-month bubble prediction evaluation` GitHub workflow runs up to 6
 
 The `Two-hour-ahead average bubble forecast` workflow calibrates the detector exclusively on the previous calendar day, issues a forecast at time `t` from the completed `(t-2h,t]` window, and scores it only after `(t,t+2h]` closes. Runtime timestamp audits fail closed if calibration, features, completed-history targets, or future scoring data cross the forecast boundary. This fixed-horizon output predicts average bubble notional, not direction or trading returns.
 
+The `forecast-24h` command rolls completed UTC-day bubble samples forward by one day. Its forecast at midnight uses only earlier dates and is scored against the qualifying-bubble average in the newly opened 24-hour UTC window.
+
 ## Cloud operation
 
 - `.github/workflows/daily.yml`: catch-up-safe daily research run.

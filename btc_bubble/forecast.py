@@ -348,3 +348,106 @@ def aggregate_two_hour_directory(input_dir: str | Path, output_dir: str | Path) 
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     write_two_hour_chart(chart_path, forecasts)
     return {"summary": summary, "chart": str(chart_path), "forecasts_csv": str(forecast_path)}
+
+
+def build_24_hour_forecasts(events: pd.DataFrame, shrinkage_count: float = 20.0) -> tuple[pd.DataFrame, dict]:
+    """Predict each UTC day's average bubble size using completed prior days only."""
+    data = events.sort_values("timestamp").reset_index(drop=True).copy()
+    value_column = "actual_bubble_usd" if "actual_bubble_usd" in data else "cluster_q_usd"
+    price_column = "price" if "price" in data else "signal_price"
+    data["date"] = pd.to_datetime(data["timestamp"], unit="ms", utc=True).dt.floor("D")
+    daily = data.groupby("date", sort=True).agg(
+        price_at_forecast=(price_column, "median"),
+        actual_next_24h_mean_bubble_usd=(value_column, "mean"),
+        actual_next_24h_bubble_count=(value_column, "size"),
+        earliest_target_event_timestamp=("timestamp", "min"),
+        latest_target_event_timestamp=("timestamp", "max"),
+    ).reset_index()
+    rows: list[dict] = []
+    for i in range(1, len(daily)):
+        target = daily.iloc[i]
+        prior = daily.iloc[i - 1]
+        completed = daily.iloc[:i]
+        issue = int(target["date"].timestamp() * 1000)
+        target_end = issue + 24 * 60 * 60 * 1000
+        historical = float(completed["actual_next_24h_mean_bubble_usd"].mean())
+        weight = float(prior["actual_next_24h_bubble_count"] / (prior["actual_next_24h_bubble_count"] + shrinkage_count))
+        prediction = weight * float(prior["actual_next_24h_mean_bubble_usd"]) + (1.0 - weight) * historical
+        latest_information = int(prior["latest_target_event_timestamp"])
+        earliest_target = int(target["earliest_target_event_timestamp"])
+        latest_target = int(target["latest_target_event_timestamp"])
+        violation = latest_information >= issue or earliest_target < issue or latest_target >= target_end
+        rows.append({
+            "issue_timestamp": issue,
+            "target_end_timestamp": target_end,
+            "price_at_forecast": float(target["price_at_forecast"]),
+            "previous_24h_mean_bubble_usd": float(prior["actual_next_24h_mean_bubble_usd"]),
+            "previous_24h_bubble_count": int(prior["actual_next_24h_bubble_count"]),
+            "predicted_next_24h_mean_bubble_usd": prediction,
+            "actual_next_24h_mean_bubble_usd": float(target["actual_next_24h_mean_bubble_usd"]),
+            "actual_next_24h_bubble_count": int(target["actual_next_24h_bubble_count"]),
+            "latest_information_timestamp": latest_information,
+            "earliest_target_event_timestamp": earliest_target,
+            "latest_target_event_timestamp": latest_target,
+            "lookahead_violation": bool(violation),
+        })
+    forecasts = pd.DataFrame(rows)
+    if not forecasts.empty and bool(forecasts["lookahead_violation"].any()):
+        raise ValueError("24-hour forecast lookahead audit failed")
+    actual = forecasts["actual_next_24h_mean_bubble_usd"].to_numpy(dtype=float)
+    predicted = forecasts["predicted_next_24h_mean_bubble_usd"].to_numpy(dtype=float)
+    summary = {
+        "status": "ok" if len(forecasts) else "insufficient_history",
+        "forecast_horizon_hours": 24,
+        "forecast_samples": int(len(forecasts)),
+        "median_actual_next_24h_mean_usd": float(np.median(actual)) if len(actual) else None,
+        "median_predicted_next_24h_mean_usd": float(np.median(predicted)) if len(predicted) else None,
+        "mean_absolute_error_usd": float(np.mean(np.abs(predicted - actual))) if len(actual) else None,
+        "median_absolute_percentage_error": float(np.median(np.abs(predicted - actual) / actual)) if len(actual) else None,
+        "correlation": float(np.corrcoef(predicted, actual)[0, 1]) if len(actual) > 1 else None,
+        "lookahead_violations": int(forecasts["lookahead_violation"].sum()) if len(forecasts) else 0,
+        "causality_audit_passed": bool(len(forecasts) and not forecasts["lookahead_violation"].any()),
+        "data_scope": "daily qualifying-bubble samples from the supplied event file",
+    }
+    return forecasts, summary
+
+
+def write_24_hour_chart(path: str | Path, forecasts: pd.DataFrame) -> Path:
+    import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
+
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    dates = pd.to_datetime(forecasts["issue_timestamp"], unit="ms", utc=True)
+    fig, price_axis = plt.subplots(figsize=(15, 7.5))
+    bubble_axis = price_axis.twinx()
+    price_axis.plot(dates, forecasts["price_at_forecast"], color="#2563eb", linewidth=2.0, label="BTC price")
+    bubble_axis.plot(dates, forecasts["predicted_next_24h_mean_bubble_usd"] / 1_000_000, color="#f59e0b", linewidth=2.2, label="Predicted next-24h average")
+    bubble_axis.plot(dates, forecasts["actual_next_24h_mean_bubble_usd"] / 1_000_000, color="#10b981", linewidth=2.2, label="Actual next-24h average")
+    price_axis.set_title("BTC average bubble size forecast issued 24 hours in advance")
+    price_axis.set_xlabel("Forecast issue date (UTC)")
+    price_axis.set_ylabel("BTC price (USDT)", color="#2563eb")
+    bubble_axis.set_ylabel("Average qualifying bubble notional (USD millions)")
+    price_axis.grid(alpha=0.2)
+    price_axis.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+    price_axis.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
+    lines = price_axis.get_lines() + bubble_axis.get_lines()
+    price_axis.legend(lines, [line.get_label() for line in lines], loc="upper left", ncol=3)
+    fig.autofmt_xdate()
+    fig.subplots_adjust(left=0.09, right=0.91, bottom=0.16, top=0.90)
+    fig.savefig(target, dpi=160)
+    plt.close(fig)
+    return target
+
+
+def create_24_hour_forecast_report(events_csv: str | Path, output_dir: str | Path) -> dict:
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    forecasts, summary = build_24_hour_forecasts(pd.read_csv(events_csv))
+    forecast_path = output / "24-hour-ahead-forecasts.csv"
+    summary_path = output / "24-hour-ahead-summary.json"
+    chart_path = output / "24-hour-ahead-chart.png"
+    forecasts.to_csv(forecast_path, index=False)
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    write_24_hour_chart(chart_path, forecasts)
+    return {"summary": summary, "chart": str(chart_path), "forecasts_csv": str(forecast_path)}

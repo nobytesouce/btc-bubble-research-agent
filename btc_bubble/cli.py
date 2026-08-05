@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from .forecast import aggregate_forecast_directory, aggregate_two_hour_directory
+from .forecast import aggregate_forecast_directory, aggregate_two_hour_directory, create_24_hour_forecast_report
 from .pipeline import run_demo, run_forecast, run_two_hour_samples
 
 
@@ -31,6 +31,9 @@ def build_parser() -> argparse.ArgumentParser:
     aggregate_two_hour = sub.add_parser("aggregate-2h", help="Combine and score two-hour-ahead samples")
     aggregate_two_hour.add_argument("--input-dir", required=True)
     aggregate_two_hour.add_argument("--output-dir", default="combined-report")
+    twenty_four = sub.add_parser("forecast-24h", help="Predict each next UTC day's average bubble size")
+    twenty_four.add_argument("--events-csv", required=True)
+    twenty_four.add_argument("--output-dir", default="combined-report")
     return parser
 
 
@@ -50,6 +53,9 @@ def main() -> None:
         print(json.dumps(result, indent=2))
     elif args.command == "aggregate-2h":
         result = aggregate_two_hour_directory(args.input_dir, args.output_dir)
+        print(json.dumps(result, indent=2))
+    elif args.command == "forecast-24h":
+        result = create_24_hour_forecast_report(args.events_csv, args.output_dir)
         print(json.dumps(result, indent=2))
 
 
